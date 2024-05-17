@@ -85,6 +85,8 @@ class Decryption:
                 else:
                     self.decrypted_text += char
 
+            print(min_shift )
+
         if self.algo == "mono":
             # decryption with frequency analysis on mono
             replacement_key = self.frequencyAnalysis(parsed_encrypted_text)
@@ -121,6 +123,9 @@ class Decryption:
             replacement_key[letters_associate] = top_freq
         print(letter_freq)
         print(replacement_key)
+
+        print("".join(replacement_key.values()))
+        print("".join(replacement_key.keys()))
         
         return replacement_key
 
@@ -180,7 +185,7 @@ if __name__ == "__main__":
     import os
 
     # cesar cipher completed
-    encrypted_file = "./encrypted 4/caesar_easy_encrypted.txt"
+    encrypted_file = "./mono_easy.txt"
     with open(encrypted_file, 'r') as file:
         file_name = os.path.basename(file.name).replace("encrypt", "decrypt")
         cipher_algo = file_name.split("_")[0]
