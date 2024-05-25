@@ -2,8 +2,8 @@ from enum import Enum
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
 import os
+import urllib.parse
 
-IV = get_random_bytes(128)
 
 class MODES_NUM(Enum):
     ECB = 0
@@ -13,6 +13,14 @@ def PKCS7_padding(data: bytes, block_size: int) -> bytes:
     # implementation of PKCS#7 padding
     padding = block_size - len(data) % block_size
     return data + bytes([padding] * padding)
+
+def PKCS7_unpadding(data: bytes) -> bytes:
+    padding_len = data[-1]
+    if padding_len < 1 or padding_len > 16:
+        raise ValueError("Invalid padding length")
+    if data[-padding_len:] != bytes([padding_len] * padding_len):
+        raise ValueError("Invalid padding bytes")
+    return data[:-padding_len]
 
 class Task1:
     def __init__(self, modes: str):
@@ -29,9 +37,7 @@ class Task1:
             header = bmp_data[:54] 
             plaintext = bmp_data[54:]
 
-            # using PKCS7 padding to to account ofr plaintexts that are not an integral size of AES's block size
-            padded_plaintext = PKCS7_padding(plaintext, 128)
-            encrypted_bmp = header + self.encrypt(padded_plaintext, key)
+            encrypted_bmp = header + self.encrypt(plaintext, key)
 
             # Write the encrypted text to a file
             if not os.path.exists(output_directory):
@@ -54,13 +60,16 @@ class Task1:
             raise Exception('Invalid mode')
         
     def ecb_encrypt(self, plaintext: bytes, key: bytes) -> bytes:
+
+        # using PKCS7 padding to to account ofr plaintexts that are not an integral size of AES's block size
+        padded_plaintext = PKCS7_padding(plaintext, 16)
         cipher = AES.new(key, AES.MODE_ECB)
 
         full_cipher_text = b''
 
-        for i in range(0, len(plaintext), 128):
+        for i in range(0, len(padded_plaintext), 16):
             # encrypt each block of plaintext using the AES cipher
-            cipher_text = cipher.encrypt(plaintext[i:i+128])
+            cipher_text = cipher.encrypt(padded_plaintext[i:i+16])
             full_cipher_text += cipher_text
 
         return full_cipher_text
@@ -69,81 +78,91 @@ class Task1:
         return bytes(a ^ b for a, b in zip(byte_str1, byte_str2))
     
     def cbc_encrypt(self, plaintext: bytes, key: bytes) -> bytes:
-        cipher = AES.new(key, AES.MODE_CBC)
+        padded_plaintext = PKCS7_padding(plaintext, 16)
+        cipher = AES.new(key, AES.MODE_ECB)
+        iv = get_random_bytes(16)
 
-        full_cipher_text = b''
+        previous_block = iv
+        encrypted_data = iv  # Include IV at the beginning of the encrypted data
 
-        initial_plain_text = plaintext[0:128] 
-        cipher_text = self.xor_bytes(initial_plain_text, IV)
-        full_cipher_text += cipher.encrypt(cipher_text)
-
-        for i in range(128, len(plaintext), 128):
+        for i in range(0, len(padded_plaintext), 16):
             # XOR the plaintext with the previous ciphertext
-            plain_text_used_for_encryption = self.xor_bytes(cipher_text, plaintext[i:i+128])
-            cipher_text = cipher.encrypt(plain_text_used_for_encryption) # used to XOR next iteration in CBC
-            full_cipher_text += cipher_text
+            block = padded_plaintext[i:i+16]
+            block = self.xor_bytes(block, previous_block)
+            encrypted_block = cipher.encrypt(block)
+            encrypted_data += encrypted_block
+            previous_block = encrypted_block
 
-        return full_cipher_text
+        return encrypted_data
+    
     
 class Task2:
-    def __init__(self, user_input: str, key: bytes):
+    def __init__(self, user_input: str, key: bytes, admin: bool = False):
         self.user_input = user_input
         self.key = key
+        self.admin = admin
 
-    def url_encode(self, string: str):
-        encoded_string = ""
-        for char in string:
-            if char == ';':
-                encoded_string += '%3B'
-            elif char == '=':
-                encoded_string += '%3D'
-            else:
-                encoded_string += char
-        return encoded_string
+    def url_encode(self, string: str) -> str:
+        return urllib.parse.quote(string)
+
+    def url_decode(self, string: str) -> str:
+        return urllib.parse.unquote(string)
 
     def submit(self):
         cbc_encryption = Task1('CBC')
 
-        padded_user_input = PKCS7_padding(self.user_input.encode(encoding="utf-8"), 128)
+        padded_user_input = PKCS7_padding(self.user_input.encode(encoding="utf-8"), 16)
         encrypted_msg = cbc_encryption.encrypt(padded_user_input, self.key)
 
         encoded_string = f'userid=456;userdata={encrypted_msg.hex()};session-id=31337'
         encoded_string = self.url_encode(encoded_string)
+        if self.admin:
+            encoded_string = encoded_string + ";admin=true"
         print("Encoded string:", encoded_string)
         return encoded_string
 
     def verify(self, ciphertext: str):
-        print(ciphertext)
         cipher = AES.new(self.key, AES.MODE_CBC)
-        start_index = ciphertext.find("userdata%3D") + len('userdata%3D')
-        end_index = ciphertext.find("%3Bsession-id")
-        encoded_user_data = ciphertext[start_index:end_index]
+        decoded_string = self.url_decode(ciphertext)
 
-        # encoded_user_data = ciphertext[ciphertext.find("userdata%3D") + len('userdata%3D') : ciphertext.find("%3Bsession-id")]
+        find_admin = decoded_string.find("admin=true")
+        start_index = decoded_string.find("userdata=") + len('userdata=')
+        end_index = decoded_string.find(";session-id")
+        encoded_user_data = decoded_string[start_index:end_index]
+
         user_data = bytes.fromhex(encoded_user_data)
 
-        print(user_data)
-        print(len(user_data))
-        print(len(user_data) % 128)
-        message = cipher.decrypt(user_data)
-        print("Message:", message.decode())
+        iv = user_data[:16]
+        encrypted_data = user_data[16:]
+
+        cipher = AES.new(self.key, AES.MODE_CBC, iv)
+        decrypted_data = cipher.decrypt(encrypted_data)
+        try:
+            plaintext = PKCS7_unpadding(decrypted_data)
+            print("Message:", plaintext.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as e:
+            print("Error during decryption or unpadding:", str(e))
+
+        return find_admin != -1
 
 
 if __name__ == '__main__':
     task_ecb = Task1('ECB')
     task_cbc = Task1('CBC')
 
+
+
     aes_key = get_random_bytes(16)
 
-    # print("IV", IV)
+    task_ecb.encrypt_image('./images/cp-logo.bmp', aes_key)
+    task_ecb.encrypt_image('./images/mustang.bmp', aes_key)
 
-    # task_ecb.encrypt_image('./images/cp-logo.bmp', aes_key)
-    # task_ecb.encrypt_image('./images/mustang.bmp', aes_key)
+    task_cbc.encrypt_image('./images/cp-logo.bmp', aes_key)
+    task_cbc.encrypt_image('./images/mustang.bmp', aes_key)
 
-    # task_cbc.encrypt_image('./images/cp-logo.bmp', aes_key)
-    # task_cbc.encrypt_image('./images/mustang.bmp', aes_key)
 
-    
+
+
     task_2 = Task2("You're the man now, dog", aes_key)
     encoded_string = task_2.submit()
-    task_2.verify(encoded_string)
+    print(task_2.verify(encoded_string))
