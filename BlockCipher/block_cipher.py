@@ -150,7 +150,9 @@ if __name__ == '__main__':
     task_ecb = Task1('ECB')
     task_cbc = Task1('CBC')
 
-
+    '''
+    Task 1
+    '''
 
     aes_key = get_random_bytes(16)
 
@@ -161,8 +163,10 @@ if __name__ == '__main__':
     task_cbc.encrypt_image('./images/mustang.bmp', aes_key)
 
 
-
-
+    '''
+    Task 2
+    '''
+    
     task_2 = Task2("You're the man now, dog", aes_key)
     encoded_string = task_2.submit()
     print(task_2.verify(encoded_string))
